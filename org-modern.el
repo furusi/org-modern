@@ -5,7 +5,7 @@
 ;; Author: Daniel Mendler <mail@daniel-mendler.de>
 ;; Maintainer: Daniel Mendler <mail@daniel-mendler.de>
 ;; Created: 2022
-;; Version: 0.3
+;; Version: 0.4
 ;; Package-Requires: ((emacs "27.1"))
 ;; Homepage: https://github.com/minad/org-modern
 
@@ -34,7 +34,8 @@
 
 (require 'org)
 (eval-when-compile
-  (require 'cl-lib))
+  (require 'cl-lib)
+  (require 'subr-x))
 
 (defgroup org-modern nil
   "Modern looks for Org."
@@ -48,20 +49,23 @@
   (when (facep 'org-modern-label)
     (set-face-attribute
      'org-modern-label nil
-     :inherit (and org-modern-variable-pitch 'variable-pitch)
-     :box (when org-modern-label-border
-            (let ((border (if (eq org-modern-label-border 'auto)
-                              (max 3 (cond
-                                      ((integerp line-spacing) line-spacing)
-                                      ((floatp line-spacing) (ceiling (* line-spacing (frame-char-height))))
-                                      (t (/ (frame-char-height) 10))))
-                            org-modern-label-border)))
-              (list :color (face-attribute 'default :background nil t)
-                    :line-width
-                    ;; Emacs 28 supports different line horizontal and vertical line widths
-                    (if (>= emacs-major-version 28)
-                        (cons 0 (- border))
-                      (- border))))))))
+     :inherit org-modern-variable-pitch
+     :box
+     (when org-modern-label-border
+       (let ((border (if (eq org-modern-label-border 'auto)
+                         (max 3 (cond
+                                 ((integerp line-spacing)
+                                  line-spacing)
+                                 ((floatp line-spacing)
+                                  (ceiling (* line-spacing (frame-char-height))))
+                                 (t (/ (frame-char-height) 10))))
+                       org-modern-label-border)))
+         (list :color (face-attribute 'default :background nil t)
+               :line-width
+               ;; Emacs 28 supports different line horizontal and vertical line widths
+               (if (>= emacs-major-version 28)
+                   (cons 0 (- border))
+                 (- border))))))))
 
 (defun org-modern--setter (sym val)
   "Set SYM to VAL and update faces."
@@ -75,10 +79,10 @@ A value between 0.1 and 0.4 of `line-spacing' is recommended."
   :type '(choice (const nil) (const auto) integer)
   :set #'org-modern--setter)
 
-(defcustom org-modern-star ["◉""○""◈""◇""⁕"]
+(defcustom org-modern-star '("◉" "○" "◈" "◇" "✳")
   "Replacement strings for headline stars for each level.
 Set to nil to disable styling the headlines."
-  :type '(choice (const nil) (vector string)))
+  :type '(repeat string))
 
 (defcustom org-modern-hide-stars 'leading
   "Make some of the headline stars invisible."
@@ -89,8 +93,15 @@ Set to nil to disable styling the headlines."
 
 (defcustom org-modern-timestamp t
   "Prettify time stamps, e.g. <2022-03-01>.
-Set to nil to disable styling the time stamps."
-  :type 'boolean)
+Set to nil to disable styling the time stamps. In order to use custom
+timestamps, the format should be (DATE . TIME) where DATE is the format
+for date, and TIME is the format for time. DATE and TIME must be
+surrounded with space. For the syntax, refer to `format-time-string'."
+  :type '(choice
+          (const :tag "Disable time stamp styling" nil)
+          (const :tag "Enable timestamp styling" t)
+          (const :tag "Use format YYYY-MM-DD HH:MM" (" %Y-%m-%d " . " %H:%M "))
+          (cons :tag "Custom format" string string)))
 
 (defcustom org-modern-table t
   "Prettify tables."
@@ -126,8 +137,10 @@ Set to nil to disable styling checkboxes."
   :type '(alist :key-type character :value-type string))
 
 (defcustom org-modern-horizontal-rule t
-  "Prettify horizontal rulers."
-  :type 'boolean)
+  "Prettify horizontal rulers.
+The value can either be a boolean to enable/disable style or display
+replacement expression, e.g., a string."
+  :type '(choice boolean sexp))
 
 (defcustom org-modern-todo t
   "Prettify todo keywords, see `org-todo-keywords'."
@@ -139,8 +152,8 @@ This is an alist, with todo keywords in the car
 and faces in the cdr. Example:
 
   (setq org-modern-todo-faces
-    '((\"TODO\" :background \"red\"
-                :foreground \"yellow\")))"
+    (quote ((\"TODO\" :background \"red\"
+                    :foreground \"yellow\"))))"
   :type '(repeat
           (cons (string :tag "Keyword")
                 (sexp   :tag "Face   "))))
@@ -155,23 +168,43 @@ and faces in the cdr. Example:
 
 (defcustom org-modern-keyword t
   "Prettify keywords like #+title.
-If set to a string, e.g., \"‣\", the string is used as replacement for #+."
-  :type '(choice (boolean :tag "Hide keyword prefix")
-                 (string :tag "Custom replacement")
-                 (const :tag "Triangle bullet" "‣")))
+If set to a string, e.g., \"‣\", the string is used as replacement for #+.
+If set to an alist of keywords and strings, the associated string will be
+used as replacement for \"#+keyword:\", with t the default key."
+  :type '(choice (boolean :tag "Hide prefix")
+                 (string :tag "Replacement")
+                 (const :tag "Triangle bullet" "‣")
+                 (alist :key-type (choice (string :tag "Keyword")
+                                          (const :tag "Default" t))
+                        :value-type (choice (string :tag "Replacement")
+                                            (const :tag "Hide prefix" t)))))
+
+(defcustom org-modern-footnote (cons nil (cadr org-script-display))
+  "Prettify footnotes.
+The car corresponds to display specification for definitions, the cdr for
+references."
+  :type '(choice (const nil) (cons sexp sexp)))
+
+(defcustom org-modern-internal-target '(" ↪ " t " ")
+  "Prettify internal link targets, e.g., <<introduction>>."
+  :type '(choice (const nil) (list string boolean string)))
+
+(defcustom org-modern-radio-target '(" ⛯ " t " ")
+  "Prettify radio link targets, e.g., <<<radio>>>."
+  :type '(choice (const nil) (list string boolean string)))
 
 (defcustom org-modern-statistics t
   "Prettify todo statistics."
   :type 'boolean)
 
-(defcustom org-modern-progress ["○""◔""◐""◕""●"]
+(defcustom org-modern-progress '("○" "◔" "◐" "◕" "●")
   "Add a progress indicator to the todo statistics.
 Set to nil to disable the indicator."
-  :type '(choice (const nil) (vector string)))
+  :type '(repeat string))
 
-(defcustom org-modern-variable-pitch t
-  "Prefer variable pitch for modern style."
-  :type 'boolean
+(defcustom org-modern-variable-pitch 'variable-pitch
+  "Use variable pitch for modern style labels."
+  :type 'symbol
   :set #'org-modern--setter)
 
 (defgroup org-modern-faces nil
@@ -198,6 +231,14 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
     (((background light)) :foreground "black")
     (t :foreground "white"))
   "Face used for tag labels.")
+
+(defface org-modern-internal-target
+  '((t :inherit org-modern-done))
+  "Face used for internal link targets.")
+
+(defface org-modern-radio-target
+  '((t :inherit org-modern-done))
+  "Face used for radio link targets.")
 
 (defface org-modern-done
   '((default :inherit org-modern-label)
@@ -253,38 +294,45 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
     (t :strike-through "gray30"))
   "Face used for horizontal ruler.")
 
-(defvar-local org-modern--keywords nil
-  "List of font lock keywords.")
+(defvar-local org-modern--font-lock-keywords nil)
+(defvar-local org-modern--star-cache nil)
+(defvar-local org-modern--checkbox-cache nil)
+(defvar-local org-modern--progress-cache nil)
 
 (defun org-modern--checkbox ()
   "Prettify checkboxes according to `org-modern-checkbox'."
   (let ((beg (match-beginning 1))
         (end (match-end 1)))
     (put-text-property
-     beg end
-     'display
-     (propertize (alist-get (char-after (1+ beg))
-                            org-modern-checkbox)
-                 'face 'org-modern-symbol))))
+     beg end 'display
+     (alist-get (char-after (1+ beg)) org-modern--checkbox-cache))))
 
-(defun org-modern--statistics ()
-  "Prettify headline todo statistics."
-  (let ((label (substring-no-properties (match-string 1))))
-    (when org-modern-progress
-      (let ((idx (floor
-                  (* (1- (length org-modern-progress))
-                     (if (match-beginning 2)
-                         (* 0.01 (string-to-number (match-string 2)))
-                       (let ((q (string-to-number (match-string 4))))
-                         (if (= q 0)
-                             1.0
-                           (/ (* 1.0 (string-to-number (match-string 3))) q))))))))
-        (setq label (concat (propertize (aref org-modern-progress idx)
-                                        'face 'org-modern-symbol)
-                            " " label))))
-    (setq label (concat " " label " "))
-    (add-text-properties (1- (match-beginning 1)) (1+ (match-end 1))
-                         `(display ,label face org-modern-statistics))))
+(defun org-modern--keyword ()
+  "Prettify keywords according to `org-modern-keyword'."
+  (let ((beg (match-beginning 0))
+        (end (match-end 0))
+        (rep (assoc (match-string 2) org-modern-keyword)))
+    (unless rep
+      (setq rep (assq t org-modern-keyword) end (match-end 1)))
+    (pcase (cdr rep)
+      ('t (put-text-property beg (match-end 1) 'invisible t))
+      ((pred stringp)
+       (put-text-property beg end 'display
+                          (propertize (cdr rep) 'face 'org-modern-symbol))))))
+
+(defun org-modern--progress ()
+  "Prettify headline todo progress."
+  (put-text-property
+   (match-beginning 1) (1+ (match-beginning 1)) 'display
+   (aref org-modern--progress-cache
+         (floor
+          (* (1- (length org-modern--progress-cache))
+             (if (match-beginning 2)
+                 (* 0.01 (string-to-number (match-string 2)))
+               (let ((q (string-to-number (match-string 4))))
+                 (if (= q 0)
+                     1.0
+                   (/ (* 1.0 (string-to-number (match-string 3))) q)))))))))
 
 (defun org-modern--tag ()
   "Prettify headline tags."
@@ -298,17 +346,12 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
       (while (search-forward ":" end 'noerror)
         (when colon
           (put-text-property
-           colon
-           (1+ colon)
-           'display (format #(" %c" 1 3 (cursor t)) (char-after colon)))
+           colon (1+ colon) 'display
+           (format #(" %c" 1 3 (cursor t)) (char-after colon)))
           (put-text-property
-           (- (point) 2)
-           (1- (point))
-           'display (format "%c " (char-before (1- (point)))))
-          (put-text-property
-           colon
-           (1- (point))
-           'face 'org-modern-tag))
+           (- (point) 2) (1- (point)) 'display
+           (string (char-before (1- (point))) ?\s))
+          (put-text-property colon (1- (point)) 'face 'org-modern-tag))
         (setq colon (point))
         (add-text-properties (1- colon) colon colon-props)))))
 
@@ -317,15 +360,11 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
   (let ((todo (match-string 1))
         (beg (match-beginning 1))
         (end (match-end 1)))
+    (put-text-property beg (1+ beg) 'display
+                       (format #(" %c" 1 3 (cursor t)) (char-after beg)))
+    (put-text-property (1- end) end 'display (string (char-before end) ?\s))
     (put-text-property
-     beg (1+ beg)
-     'display (format #(" %c" 1 3 (cursor t)) (char-after beg)))
-    (put-text-property
-     (1- end) end
-     'display (format "%c " (char-before end)))
-    (put-text-property
-     beg end
-     'face
+     beg end 'face
      (if-let (face (cdr (assoc todo org-modern-todo-faces)))
          `(:inherit (,face org-modern-label))
        (if (member todo org-done-keywords)
@@ -334,46 +373,51 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
 
 (defun org-modern--timestamp ()
   "Prettify timestamps."
-  (let* ((active (eq (char-after (match-beginning 0)) ?<))
+  (let* ((beg (match-beginning 0))
+         (end (match-end 0))
+         (tbeg (match-beginning 2))
+         (tend (match-end 2))
+         (active (eq (char-after beg) ?<))
          (date-face (if active
                         'org-modern-date-active
                       'org-modern-date-inactive))
          (time-face (if active
                         'org-modern-time-active
                       'org-modern-time-inactive)))
-    (put-text-property
-     (match-beginning 0)
-     (1+ (match-beginning 0))
-     'display " ")
-    (put-text-property
-     (1- (match-end 0))
-     (match-end 0)
-     'display " ")
-    ;; year-month-day
-    (put-text-property
-     (match-beginning 0)
-     (if (eq (match-beginning 2) (match-end 2)) (match-end 0) (match-end 1))
-     'face date-face)
-    ;; hour:minute
-    (unless (eq (match-beginning 2) (match-end 2))
-      (put-text-property
-       (1- (match-end 1))
-       (match-end 1)
-       'display (format "%c " (char-before (match-end 1))))
-      (put-text-property
-       (match-beginning 2)
-       (match-end 0)
-       'face time-face))))
+    (remove-list-of-text-properties beg end '(display))
+    (if (consp org-modern-timestamp)
+        (let* ((time (save-match-data
+                       (encode-time
+                        (org-fix-decoded-time
+                         (org-parse-time-string
+                          (buffer-substring beg end))))))
+               (fmt org-modern-timestamp)
+               (date-str (format-time-string (car fmt) time))
+               (time-str (format-time-string (cdr fmt) time)))
+          ;; year-month-day
+          (add-text-properties beg (if (eq tbeg tend) end tbeg)
+                               `(face ,date-face display ,date-str))
+          ;; hour:minute
+          (unless (eq tbeg tend)
+            (add-text-properties tbeg end
+                                 `(face ,time-face display ,time-str))))
+      (put-text-property beg (1+ beg) 'display " ")
+      (put-text-property (1- end) end 'display " ")
+      ;; year-month-day
+      (put-text-property beg (if (eq tbeg tend) end tbeg) 'face date-face)
+      ;; hour:minute
+      (unless (eq tbeg tend)
+        (put-text-property (1- tbeg) tbeg 'display
+                           (string (char-before tbeg) ?\s))
+        (put-text-property tbeg end 'face time-face)))))
 
 (defun org-modern--star ()
   "Prettify headline stars."
   (let ((level (- (match-end 1) (match-beginning 1))))
     (put-text-property
-     (match-beginning 2)
-     (match-end 2)
-     'display
-     (propertize (aref org-modern-star (min (1- (length org-modern-star)) level))
-                 'face 'org-modern-symbol))))
+     (match-beginning 2) (match-end 2) 'display
+     (aref org-modern--star-cache
+           (min (1- (length org-modern--star-cache)) level)))))
 
 (defun org-modern--table ()
   "Prettify vertical table lines."
@@ -420,10 +464,6 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
                      (put-text-property i (1+ i) 'display
                                         (if (= 0 (mod i 2)) sp1 sp2)))))))))
 
-
-(define-fringe-bitmap 'org-modern--block-inner (make-vector 1 #x80) nil nil '(top t))
-(define-fringe-bitmap 'org-modern--block-begin (vconcat (make-vector 20 0) [#xFF] (make-vector 107 #x80)) nil nil 'top)
-(define-fringe-bitmap 'org-modern--block-end (vconcat (make-vector 107 #x80) [#xFF] (make-vector 20 0)) nil nil 'bottom)
 (defun org-modern--block-fringe ()
   "Prettify blocks with fringe bitmaps."
   ;; Do not add source block fringe markers if org-indent-mode is
@@ -470,9 +510,30 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
   :group 'org-modern
   (cond
    (org-modern-mode
+    (unless (fringe-bitmap-p 'org-modern--block-inner)
+      (let* ((g (ceiling (frame-char-height) 1.8))
+             (h (- (default-line-height) g)))
+        (define-fringe-bitmap 'org-modern--block-inner
+          [128] nil nil '(top t))
+        (define-fringe-bitmap 'org-modern--block-begin
+          (vconcat (make-vector g 0) [#xFF] (make-vector (- 127 g) #x80)) nil nil 'top)
+        (define-fringe-bitmap 'org-modern--block-end
+          (vconcat (make-vector (- 127 h) #x80) [#xFF] (make-vector h 0)) nil nil 'bottom)))
     (org-modern--update-label-face)
     (setq
-     org-modern--keywords
+     org-modern--star-cache
+     (vconcat (mapcar
+               (lambda (x) (propertize x 'face 'org-modern-symbol))
+               org-modern-star))
+     org-modern--progress-cache
+     (vconcat (mapcar
+               (lambda (x) (concat " " (propertize x 'face 'org-modern-symbol) " "))
+               org-modern-progress))
+     org-modern--checkbox-cache
+     (mapcar (pcase-lambda (`(,k . ,v))
+               (cons k (propertize v 'face 'org-modern-symbol)))
+             org-modern-checkbox)
+     org-modern--font-lock-keywords
      (append
       (when-let (bullet (alist-get ?+ org-modern-list))
         `(("^[ \t]*\\(+\\)[ \t]" 1 '(face nil display ,bullet))))
@@ -486,13 +547,14 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
            (2 '(face nil display " "))
            (3 '(face nil display " ")))))
       (when org-modern-todo
-        `((,(format "^\\*+ +%s " (regexp-opt org-todo-keywords-1 t)) (0 (org-modern--todo)))))
+        `((,(format "^\\*+ +%s " (regexp-opt org-todo-keywords-1 t))
+           (0 (org-modern--todo)))))
       (when org-modern-keyword
-        `(("^[ \t]*\\(#\\+\\)\\S-" 1
-           '(face nil
-                  ,@(if (stringp org-modern-keyword)
-                       `(display ,org-modern-keyword)
-                     '(invisible t))))))
+        `(("^[ \t]*\\(#\\+\\)\\([^: \t\n]+\\):"
+           ,@(pcase org-modern-keyword
+               ('t '(1 '(face nil invisible t)))
+               ((pred stringp) `(1 '(face nil display ,org-modern-keyword)))
+               (_ '(0 (org-modern--keyword)))))))
       (when org-modern-checkbox
         '(("^[ \t]*\\(?:[-+*]\\|[0-9]+[.)]\\)[ \t]+\\(\\[[ X-]\\]\\)[ \t]"
            (0 (org-modern--checkbox)))))
@@ -502,31 +564,70 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
            ,@(and (eq org-modern-hide-stars 'leading) '((1 '(face nil invisible t))))
            ,@(and (eq org-modern-hide-stars t) '((0 '(face nil invisible t)))))))
       (when org-modern-horizontal-rule
-        '(("^-\\{5,\\}$" 0 '(face org-modern-horizontal-rule display (space :width text)))))
+        `(("^[ \t]*-\\{5,\\}$" 0
+           '(face org-modern-horizontal-rule display
+                  ,(if (eq org-modern-horizontal-rule t)
+                       '(space :width text)
+                     org-modern-horizontal-rule)))))
       (when org-modern-table
         '(("^[ \t]*\\(|.*|\\)[ \t]*$" (0 (org-modern--table)))))
       (when org-modern-block
-        '(("^[ \t]*#\\+\\(?:begin\\|BEGIN\\)_\\S-" (0 (org-modern--block-fringe)))
-          ("^\\([ \t]*#\\+\\(?:begin\\|BEGIN\\)_\\)\\(\\S-+\\).*"
+        '(("^[ \t]*#\\+\\(?:begin\\|BEGIN\\)_\\S-"
+           (0 (org-modern--block-fringe)))
+          ("^\\([ \t]*#\\+\\(?:begin\\|BEGIN\\)_\\)\\(\\S-+\\)"
            (1 '(face nil display (space :width (3))))
            (2 'org-modern-block-keyword append))
-          ("^\\([ \t]*#\\+\\(?:end\\|END\\)_\\)\\(\\S-+\\).*"
+          ("^\\([ \t]*#\\+\\(?:end\\|END\\)_\\)\\(\\S-+\\)"
            (1 '(face nil display (space :width (3))))
            (2 'org-modern-block-keyword append))))
       (when org-modern-tag
         `((,(concat "^\\*+.*?\\( \\)\\(:\\(?:" org-tag-re ":\\)+\\)[ \t]*$")
            (0 (org-modern--tag)))))
-      (when (and org-modern-timestamp (not org-display-custom-times))
+      (when org-modern-footnote
+        `(("^\\(\\[fn:\\)[[:word:]-_]+\\]" ;; Definition
+           ,@(if-let (x (car org-modern-footnote))
+                 `((0 '(face nil display ,x))
+                   (1 '(face nil display ,(propertize "[" 'display x))))
+               '((1 '(face nil display "[")))))
+          ("[^\n]\\(\\(\\[fn:\\)[[:word:]-_]+\\]\\)" ;; Reference
+           ,@(if-let (x (cdr org-modern-footnote))
+                 `((1 '(face nil display ,x))
+                   (2 '(face nil display ,(propertize "[" 'display x))))
+               '((2 '(face nil display "[")))))))
+      (let ((target "\\([^<>\n\r\t ][^<>\n\r]*?[^<>\n\r\t @$]\\|[^<>\n\r\t @$]\\)"))
+        (append
+         (when org-modern-internal-target
+           `((,(format "\\(<<\\)%s\\(>>\\)" target)
+              (0 '(face org-modern-internal-target) t)
+              (1 '(face nil display ,(propertize (car org-modern-internal-target)
+                                                 'face 'org-modern-symbol)))
+              (3 '(face nil display ,(propertize (caddr org-modern-internal-target)
+                                                 'face 'org-modern-symbol)))
+              ,@(unless (cadr org-modern-internal-target)
+                  '((2 '(face nil invisible t)))))))
+         (when org-modern-radio-target
+           `((,(format "\\(<<<\\)%s\\(>>>\\)" target)
+              (0 '(face org-modern-radio-target) t)
+              (1 '(face nil display ,(propertize (car org-modern-radio-target)
+                                                 'face 'org-modern-symbol)))
+              (3 '(face nil display ,(propertize (caddr org-modern-radio-target)
+                                                 'face 'org-modern-symbol)))
+              ,@(unless (cadr org-modern-radio-target)
+                  '((2 '(face nil invisible t)))))))))
+      (when org-modern-timestamp
         '(("\\(?:<\\|\\[\\)\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\(?: [[:word:]]+\\)?\\(?: [.+-]+[0-9ymwdh/]+\\)*\\)\\(\\(?: [0-9:-]+\\)?\\(?: [.+-]+[0-9ymwdh/]+\\)*\\)\\(?:>\\|\\]\\)"
            (0 (org-modern--timestamp)))
           ("<[^>]+>\\(-\\)\\(-\\)<[^>]+>\\|\\[[^]]+\\]\\(?1:-\\)\\(?2:-\\)\\[[^]]+\\]"
            (1 '(face org-modern-label display #("  " 1 2 (face (:strike-through t) cursor t))) t)
            (2 '(face org-modern-label display #("  " 0 1 (face (:strike-through t)))) t))))
       (when org-modern-statistics
-        '((" \\[\\(\\([0-9]+\\)%\\|\\([0-9]+\\)/\\([0-9]+\\)\\)\\]" (0 (org-modern--statistics)))))))
-    (font-lock-add-keywords nil org-modern--keywords 'append)
+        `((" \\(\\[\\(?:\\([0-9]+\\)%\\|\\([0-9]+\\)/\\([0-9]+\\)\\)\\(\\]\\)\\)"
+           (0 ,(if org-modern-progress '(org-modern--progress) ''(face nil display " ")))
+           (1 '(face org-modern-statistics) t)
+           (5 '(face nil display " ")))))))
+    (font-lock-add-keywords nil org-modern--font-lock-keywords 'append)
     (advice-add #'org-unfontify-region :after #'org-modern--unfontify))
-   (t (font-lock-remove-keywords nil org-modern--keywords)
+   (t (font-lock-remove-keywords nil org-modern--font-lock-keywords)
       (let ((org-modern-mode t))
         (org-modern--unfontify (point-min) (point-max)))))
   (font-lock-flush))
@@ -548,14 +649,41 @@ You can specify a font `:family'. The font families `Iosevka', `Hack' and
   "Finalize Org agenda highlighting."
   (save-excursion
     (save-match-data
+      ;; Todo keywords
       (goto-char (point-min))
-      (let ((re (format " %s "
+      (let ((re (format ": +%s "
                         (regexp-opt
                          (append org-todo-keywords-for-agenda
                                  org-done-keywords-for-agenda) t)))
             (org-done-keywords org-done-keywords-for-agenda))
         (while (re-search-forward re nil 'noerror)
-          (org-modern--todo))))))
+          (org-modern--todo)))
+      ;; Tags
+      (goto-char (point-min))
+      (let ((re (concat "\\( \\)\\(:\\(?:" org-tag-re ":\\)+\\)[ \t]*$")))
+        (while (re-search-forward re nil 'noerror)
+          (org-modern--tag)))
+      ;; Priorities
+      (goto-char (point-min))
+      (while (re-search-forward "\\(\\[\\)#.\\(\\]\\)" nil 'noerror)
+        ;; For some reason the org-agenda-fontify-priorities adds overlays?!
+        (when-let (ov (overlays-at (match-beginning 0))) (overlay-put (car ov) 'face nil))
+        (put-text-property (match-beginning 0) (match-end 0) 'face 'org-modern-priority)
+        (put-text-property (match-beginning 1) (match-end 1) 'display " ")
+        (put-text-property (match-beginning 2) (match-end 2) 'display " ")))))
+
+;;;###autoload
+(define-globalized-minor-mode global-org-modern-mode
+  org-modern-mode org-modern--on
+  :group 'org-modern
+  (if global-org-modern-mode
+      (add-hook 'org-agenda-finalize-hook #'org-modern-agenda)
+    (remove-hook 'org-agenda-finalize-hook #'org-modern-agenda)))
+
+(defun org-modern--on ()
+  "Enable `org-modern' in every Org buffer."
+  (when (derived-mode-p #'org-mode)
+    (org-modern-mode)))
 
 (provide 'org-modern)
 ;;; org-modern.el ends here
